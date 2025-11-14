@@ -1,12 +1,202 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Cool Website</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gary to the Max</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #000;
+      font-family: Arial, sans-serif;
+    }
+
+    #canvas {
+      display: block;
+    }
+  </style>
 </head>
+
 <body>
-    <h1>Welcome to My Cool Website!</h1>
-    <p>A cool website, yo</p>
+  <svg id="canvas"></svg>
+
+  <script>
+    const IMAGE_URL = 'gary.png';
+    const SIZE = 256; // Image resolution
+    const MAX_DEPTH = 7; // 2^8 = 256
+
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    let imageData = null;
+    let circles = [];
+
+    // Setup SVG
+    const svg = d3.select('#canvas')
+      .attr('width', width)
+      .attr('height', height);
+
+    // Calculate the size to fit the image (max 800px)
+    const MAX_SIZE = 800;
+    const scale = Math.min(width, height, MAX_SIZE);
+    const offsetX = (width - scale) / 2;
+    const offsetY = (height - scale) / 2;
+
+    // Load and process the image
+    console.log('Starting to load image from:', IMAGE_URL);
+    const img = new Image();
+    img.onload = function () {
+      console.log('✓ Image loaded successfully:', img.width, 'x', img.height);
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = SIZE;
+        canvas.height = SIZE;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, SIZE, SIZE);
+        imageData = ctx.getImageData(0, 0, SIZE, SIZE);
+        console.log('✓ Image data extracted:', imageData.data.length, 'bytes');
+
+        // Test color extraction
+        const testColor = getColorAt(SIZE / 2, SIZE / 2);
+        console.log('✓ Center pixel color:', testColor);
+
+        // Initialize with one circle NOW that image is loaded
+        initCircles();
+      } catch (e) {
+        console.error('✗ Error processing image:', e);
+      }
+    };
+    img.onerror = function (e) {
+      console.error('✗ Failed to load image from:', IMAGE_URL);
+      console.error('Error details:', e);
+    };
+    img.src = IMAGE_URL;
+
+    function getColorAt(x, y) {
+      if (!imageData) return { r: 128, g: 128, b: 128 };
+
+      // Clamp coordinates
+      x = Math.max(0, Math.min(SIZE - 1, Math.floor(x)));
+      y = Math.max(0, Math.min(SIZE - 1, Math.floor(y)));
+
+      const index = (y * SIZE + x) * 4;
+      return {
+        r: imageData.data[index],
+        g: imageData.data[index + 1],
+        b: imageData.data[index + 2]
+      };
+    }
+
+    function getAverageColor(x, y, size) {
+      if (!imageData) {
+        return { r: 128, g: 128, b: 128 };
+      }
+
+      // Sample more points for better color accuracy
+      const samples = Math.max(4, Math.min(32, Math.floor(size / 8)));
+      let r = 0, g = 0, b = 0, count = 0;
+
+      for (let dy = 0; dy < samples; dy++) {
+        for (let dx = 0; dx < samples; dx++) {
+          const sx = x + (dx / (samples - 1)) * (size - 1);
+          const sy = y + (dy / (samples - 1)) * (size - 1);
+          const color = getColorAt(sx, sy);
+          r += color.r;
+          g += color.g;
+          b += color.b;
+          count++;
+        }
+      }
+
+      const avgColor = {
+        r: Math.floor(r / count),
+        g: Math.floor(g / count),
+        b: Math.floor(b / count)
+      };
+
+      return avgColor;
+    }
+
+    function initCircles() {
+      circles = [{
+        x: 0,
+        y: 0,
+        size: SIZE,
+        depth: 0
+      }];
+      render();
+    }
+
+    function splitCircle(circle) {
+      if (circle.depth >= MAX_DEPTH) return;
+
+      const newSize = circle.size / 2;
+      const newDepth = circle.depth + 1;
+
+      // Remove the parent circle
+      circles = circles.filter(c => c !== circle);
+
+      // Add 4 child circles
+      const newCircles = [
+        { x: circle.x, y: circle.y, size: newSize, depth: newDepth },
+        { x: circle.x + newSize, y: circle.y, size: newSize, depth: newDepth },
+        { x: circle.x, y: circle.y + newSize, size: newSize, depth: newDepth },
+        { x: circle.x + newSize, y: circle.y + newSize, size: newSize, depth: newDepth }
+      ];
+
+      circles.push(...newCircles);
+      render();
+    }
+
+    function render() {
+      // Bind data
+      const selection = svg.selectAll('circle')
+        .data(circles, d => `${d.x}-${d.y}-${d.size}`);
+
+      // Remove old circles
+      selection.exit().remove();
+
+      // Add new circles
+      const entered = selection.enter()
+        .append('circle')
+        .attr('cx', d => offsetX + (d.x + d.size / 2) * scale / SIZE)
+        .attr('cy', d => offsetY + (d.y + d.size / 2) * scale / SIZE)
+        .attr('r', d => (d.size / 2) * scale / SIZE * 1.01)
+        .style('fill', d => {
+          const color = getAverageColor(d.x, d.y, d.size);
+          return `rgb(${color.r}, ${color.g}, ${color.b})`;
+        })
+        .style('opacity', 1)
+        .style('cursor', d => d.depth < MAX_DEPTH ? 'pointer' : 'default');
+
+      // Update all circles
+      entered.merge(selection)
+        .on('mouseenter', function (event, d) {
+          if (d.depth < MAX_DEPTH) {
+            splitCircle(d);
+          }
+        });
+    }
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      width = window.innerWidth;
+      height = window.innerHeight;
+      const newScale = Math.min(width, height, MAX_SIZE);
+      const newOffsetX = (width - newScale) / 2;
+      const newOffsetY = (height - newScale) / 2;
+
+      svg.attr('width', width).attr('height', height);
+
+      svg.selectAll('circle')
+        .attr('cx', d => newOffsetX + (d.x + d.size / 2) * newScale / SIZE)
+        .attr('cy', d => newOffsetY + (d.y + d.size / 2) * newScale / SIZE)
+        .attr('r', d => (d.size / 2) * newScale / SIZE * 1.01);
+    });
+  </script>
 </body>
+
 </html>
